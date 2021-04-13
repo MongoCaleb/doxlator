@@ -19,8 +19,13 @@ namespace xlator
         static MongoClient snootyClient;
         static IMongoCollection<BsonDocument> colSnoots;
 
+        private static List<ReplaceOneModel<BsonDocument>> docsToReplace;
+
+        static BsonDocument translatedDoc;
+
         static async Task Main(string[] args)
         {
+            docsToReplace = new List<ReplaceOneModel<BsonDocument>>();
 
             xlatorClient = new MongoClient("mongodb+srv://snoot:SnootSnoot@cluster0.xoid4.mongodb.net/myFirstDatabase?retryWrites=true&w=majority");
             colBlobs = xlatorClient.GetDatabase("xlator").GetCollection<TextBlock>("blocks");
@@ -28,117 +33,128 @@ namespace xlator
             snootyClient = new MongoClient("mongodb+srv://caleb:6lQ0Qr8cnkFPRwQg@cluster0-ylwlz.mongodb.net/test?authSource=admin&replicaSet=Cluster0-shard-0&readPreference=primary&appname=MongoDB%20Compass&retryWrites=true&ssl=true");
             colSnoots = snootyClient.GetDatabase("snooty_dev").GetCollection<BsonDocument>("documents");
 
-            var filter = new BsonDocument("page_id", BsonRegularExpression.Create("realm/caleb/skunkworks"));
+            var filter = new BsonDocument("page_id", BsonRegularExpression.Create("realm/caleb/skunkworks/deploy"));
             Console.WriteLine(colSnoots.CountDocuments(filter));
 
-
+            int counter = 1;
             await colSnoots.Find(filter).ForEachAsync(mainDoc =>
             {
+                translatedDoc = mainDoc;
+                //Console.WriteLine(mainDoc);
+                Console.WriteLine(counter);
+                counter++;
+
                 if (mainDoc.Contains("ast"))
                 {
                     var ast = mainDoc.GetValue("ast").AsBsonDocument;
+                    GetTextValues(ast, mainDoc);
+                }
 
-                    var text = GetTextValue(ast);
-                    if (text == String.Empty)
+
+                //colSnoots.ReplaceOne(new BsonDocument("_id", mainDoc.GetValue("_id")), translatedDoc);
+
+                if (docsToReplace.Count > 0)
+                {
+                    colSnoots.BulkWrite(docsToReplace);
+                }
+
+            });
+        }
+
+        private static void GetTextValues(BsonDocument d, BsonDocument mainDoc)
+        {
+            foo++;
+
+            if (d.Contains("children"))
+            {
+                var kiddos = d.GetValue("children").AsBsonArray;
+                foreach (BsonDocument child in kiddos)
+                {
+                    if (child.Contains("type") && child.GetValue("type") == "text")
                     {
-                        return;
+                        ProcessTextNode(child.GetValue("value").ToString(), mainDoc);
                     }
 
-
-                    Test(mainDoc, text);
-
-
-                    /*
-                    var existing = colBlobs.Find<TextBlock>(tb => tb.SourceText == text).FirstOrDefault();
-
-                    if (existing == null)
+                    if (child.Contains("children"))
                     {
-                        //This is either a new text blob, or an old one that has
-                        // changed source text (which is, in this case, "new")
-                        var enText = new TextBlock()
-                        {
-                            CreatedAt = DateTimeOffset.UtcNow,
-                            SourceText = text,
-                            Translations = new Dictionary<string, TranslationBlock>()
+                        GetTextValues(child, mainDoc);
+                    }
+                }
+            }
+        }
+
+
+        private static void ProcessTextNode(string englishText, BsonDocument mainDoc)
+        {
+
+            if (englishText == String.Empty)
+            {
+                return;
+            }
+
+            var existing = colBlobs.Find<TextBlock>(tb => tb.SourceText == englishText).FirstOrDefault();
+            string xlatedText = String.Empty;
+            if (existing == null)
+            {
+                //This is either a new text blob, or an old one that has
+                // changed source text (which is, in this case, "new")
+                xlatedText = TranslateTo(language, englishText);
+
+                var enText = new TextBlock()
+                {
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    SourceText = englishText,
+                    Translations = new Dictionary<string, TranslationBlock>()
                         {
                             {
                                 language, new TranslationBlock()
                                 {
-                                    Auto = TranslateTo(language, text)
+                                    Auto = xlatedText
                                 }
                             }
                         }
-                        };
+                };
 
+                translatedDoc = BsonSerializer.Deserialize<BsonDocument>(
+                    translatedDoc.ToString().Replace(englishText, xlatedText));
 
+                colBlobs.InsertOne(enText);
+            }
+            else if (!existing.Translations.ContainsKey(language))
+            { //we have a doc already, but no translation for this language
 
+                xlatedText = TranslateTo(language, englishText);
 
-                        colBlobs.InsertOne(enText);
-                    }
-                    else if (!existing.Translations.ContainsKey(language))
-                    {
-                        //we have a doc already, but no translation for this language
-                        var xlateText = new TranslationBlock()
-                        {
-                            Auto = TranslateTo(language, text)
-                        };
+                var xlateText = new TranslationBlock()
+                {
+                    Auto = xlatedText
+                };
 
+                translatedDoc = BsonSerializer.Deserialize<BsonDocument>(
+                    translatedDoc.ToString().Replace(englishText, xlatedText));
 
+                var update = Builders<TextBlock>.Update.Set("translations",
+                    new Dictionary<string, TranslationBlock>()
+                    {{ language, xlateText } });
 
+                colBlobs.UpdateOne<TextBlock>(e => e.Id == existing.Id, update);
+            }
+            else
+            {
+                // the english hasn't changed, so if there's already translated text,
+                // don't bother re-translating!
+            }
 
-                        var update = Builders<TextBlock>.Update.Set("translations",
-                            new Dictionary<string, TranslationBlock>()
-                            {{ language, xlateText } });
-
-                        colBlobs.UpdateOne<TextBlock>(e => e.Id == existing.Id, update);
-                    }
-                    else
-                    {
-                        // the english hasn't changed, so if there's already translated text,
-                        // don't bother re-translating!
-                    }
-
-                    //TODO: garbage collection
-
-
-*/
-                }
-
-            });
-
-        }
-
-        private static void Test(BsonDocument doc, string text)
-        {
-            var docasstring = doc.ToString().Replace(text, "this is translated text, ya know");
-
-            BsonDocument document = BsonSerializer.Deserialize<BsonDocument>(docasstring);
-
-            colSnoots.ReplaceOne(new BsonDocument("_id", doc.GetValue("_id")), document);
-
-
-            //"{ \"_id\" : ObjectId(\"6070d8c1459c5eddf6c66659\"), \"page_id\" : \"realm/caleb/skunkworks/deploy/deploy-automatically-with-github\", \"prefix\" : [\"realm\", \"caleb\", \"skunkworks\"], \"filename\" : \"deploy/deploy-automatically-with-github.txt\", \"ast\" : { \"type\" : \"root\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"target\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"target_identifier\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \"this is translated text, ya know\" }], \"ids\" : [\"deploy-github\"] }], \"domain\" : \"std\", \"name\" : \"label\", \"html_id\" : \"std-label-deploy-github\" }, { \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \"this is translated text, ya know\" }], \"id\" : \"deploy-automatically-with-github\" }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"children\" : [], \"domain\" : \"\", \"name\" : \"default-domain\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \"mongodb\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 8 } }, \"children\" : [], \"domain\" : \"\", \"name\" : \"contents\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 8 } }, \"value\" : \"On this page\" }], \"options\" : { \"local\" : true, \"backlinks\" : \"none\", \"depth\" : 2, \"class\" : \"singlecol\" } }, { \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 15 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 15 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 15 } }, \"value\" : \"Overview\" }], \"id\" : \"overview\" }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"value\" : \"You can configure a Realm app to automatically deploy whenever you push updated\\n\" }, { \"type\" : \"ref_role\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"value\" : \"configuration files\" }], \"domain\" : \"std\", \"name\" : \"label\", \"target\" : \"config-files\", \"flag\" : \"\", \"fileid\" : [\"deploy\", \"std-label-config-files\"] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"value\" : \" to a \" }, { \"type\" : \"reference\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"value\" : \"GitHub\" }], \"refuri\" : \"https://github.com/\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"value\" : \" repository.\\nYou can clone the GitHub repository to your computer and then use standard Git\\ncommands to pull down the latest versions and deploy new changes.\" }] }] }, { \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"value\" : \"Prerequisites\" }], \"id\" : \"prerequisites\" }, { \"type\" : \"list\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [{ \"type\" : \"listItem\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"value\" : \"A \" }, { \"type\" : \"reference\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"value\" : \"GitHub\" }], \"refuri\" : \"https://github.com/\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"value\" : \" account and repository. The repository should\\neither contain an \" }, { \"type\" : \"ref_role\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"value\" : \"application directory\" }], \"domain\" : \"std\", \"name\" : \"label\", \"target\" : \"app-directory\", \"flag\" : \"\", \"fileid\" : [\"deploy\", \"std-label-app-directory\"] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"value\" : \" or be\\nempty. For information on how to create an empty repository, see\\nGitHub's \" }, { \"type\" : \"reference\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"value\" : \"create a repo\" }], \"refuri\" : \"https://help.github.com/en/articles/create-a-repo\" }, { \"type\" : \"named_reference\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"refname\" : \"create a repo\", \"refuri\" : \"https://help.github.com/en/articles/create-a-repo\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"value\" : \" guide.\" }] }] }, { \"type\" : \"listItem\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"value\" : \"An installed copy of the Git CLI. If you do not have \" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"value\" : \"git\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"value\" : \"\\ninstalled, see the official guide for \" }, { \"type\" : \"reference\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"value\" : \"Installing Git\" }], \"refuri\" : \"https://git-scm.com/book/en/v1/Getting-Started-Installing-Git\" }, { \"type\" : \"named_reference\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"refname\" : \"Installing Git\", \"refuri\" : \"https://git-scm.com/book/en/v1/Getting-Started-Installing-Git\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"value\" : \".\" }] }] }, { \"type\" : \"listItem\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"value\" : \"A \" }, { \"type\" : \"reference\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"value\" : \"MongoDB Atlas\" }], \"refuri\" : \"https://www.mongodb.com/realm?tck=realm-docs#atlas-form-container\" }, { \"type\" : \"named_reference\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"refname\" : \"MongoDB Atlas\", \"refuri\" : \"https://www.mongodb.com/realm?tck=realm-docs#atlas-form-container\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"value\" : \"\\n\" }, { \"type\" : \"reference\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"value\" : \"Programmatic API Key\" }], \"refuri\" : \"https://docs.atlas.mongodb.com/configure-api-access/#programmatic-api-keys\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 35 } }, \"value\" : \"\\nto authenticate and authorize access to your app's underlying Git\\nrepo. If you have not yet generated a programmatic API key for your\\nAtlas organization, do so now.\" }] }] }], \"enumtype\" : \"unordered\" }] }, { \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 42 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 42 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 42 } }, \"value\" : \"Procedure\" }], \"id\" : \"procedure\" }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 44 } }, \"children\" : [{ \"type\" : \"root\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Install the MongoDB Realm GitHub App\" }], \"id\" : \"install-the-mongodb-realm-github-app\" }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"In order to automatically deploy based on a GitHub repository,\\nRealm requires that you install a GitHub app that has, at minimum,\\nread access to the repository.\" }] }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \"To install the app, click \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \"Deploy\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \" in the left navigation menu of the Realm UI.\\nSelect the \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \"Configuration\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \" tab and then click \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \"Install\\nRealm on GitHub\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \". A new browser window will open to the GitHub application\\ninstallation flow.\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 9 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 11 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 11 } }, \"value\" : \"GitHub may require you to provide your GitHub account credentials before\\nyou can install the app.\" }] }], \"domain\" : \"\", \"name\" : \"note\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 9 } }, \"value\" : \"GitHub Authentication\" }] }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"Select the GitHub account or organization for which you want to install the\\napp:\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"children\" : [], \"domain\" : \"\", \"name\" : \"figure\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 17 } }, \"value\" : \"/images/github-app-install-location.png\" }], \"options\" : { \"alt\" : \"GitHub Application install location screen\", \"checksum\" : \"8d495424075880d3ff9291fe9cb08e6229264fd31a4f5556c78722f61ec9ba1d\" } }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"value\" : \"Specify one or more repositories for which you want to grant MongoDB Realm read\\naccess. You can either select specific repositories or grant access to all of\\nyour repositories on GitHub. Select the repositories you want to use and then\\nclick \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"value\" : \"Install\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"value\" : \".\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"children\" : [], \"domain\" : \"\", \"name\" : \"figure\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"value\" : \"/images/github-app-install-permissions.png\" }], \"options\" : { \"alt\" : \"GitHub Application permissions request screen\", \"checksum\" : \"819a80938176501e9e186eccb89953ac1af5e9679feff545fb7c8489886c15d9\" } }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 28 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 28 } }, \"value\" : \"After you install the application, click \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 28 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 28 } }, \"value\" : \"Authorize\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 28 } }, \"value\" : \" to finish\\nconnecting Realm to GitHub.\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 33 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 33 } }, \"value\" : \"You can manage permissions for the Realm GitHub application from\\nthe \" }, { \"type\" : \"reference\", \"position\" : { \"start\" : { \"line\" : 33 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 33 } }, \"value\" : \"Installed GitHub Apps\" }], \"refuri\" : \"https://github.com/settings/installations\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 33 } }, \"value\" : \" page in your\\nGitHub settings.\" }] }], \"domain\" : \"\", \"name\" : \"note\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 31 } }, \"value\" : \"GitHub Permissions\" }] }] }], \"domain\" : \"\", \"name\" : \"step\", \"argument\" : [] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Specify a GitHub Repository\" }], \"id\" : \"specify-a-github-repository\" }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Once you have linked your GitHub account to your Realm app, you can specify a\\nrepository that Realm should automatically deploy. Specify the\\n\" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Repository\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \", \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Branch\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \", and \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Directory\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \" that\\ncontain the Realm app's configuration files and then click \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Save\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \".\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 5 } }, \"children\" : [], \"domain\" : \"\", \"name\" : \"figure\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 5 } }, \"value\" : \"/images/automatic-deploy-select-repo.png\" }], \"options\" : { \"alt\" : \"GitHub repository selection\", \"width\" : \"750px\", \"checksum\" : \"d26df709c8548feabfdca9386c5c9fe35bd3415999ebb7ea6bdb966f6fdc28e8\" } }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 9 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 11 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 11 } }, \"value\" : \"The list of repositories will only contain repos that you have\\ngranted Realm read access to.\" }] }], \"domain\" : \"\", \"name\" : \"note\", \"argument\" : [] }] }], \"domain\" : \"\", \"name\" : \"step\", \"argument\" : [] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Initialize the Repository\" }], \"id\" : \"initialize-the-repository\" }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Clone a local copy of the Git repository that you specified:\" }] }, { \"type\" : \"code\", \"position\" : { \"start\" : { \"line\" : 2 } }, \"lang\" : \"shell\", \"copyable\" : true, \"emphasize_lines\" : [], \"value\" : \"git clone https://github.com/<organization>/<repo>.git\", \"linenos\" : false }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \"The configured branch and directory must contain an \" }, { \"type\" : \"ref_role\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \"application\\ndirectory\" }], \"domain\" : \"std\", \"name\" : \"label\", \"target\" : \"app-directory\", \"flag\" : \"\", \"fileid\" : [\"deploy\", \"std-label-app-directory\"] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \" with configuration files that define your\\napplication. You can create the application directory manually or \" }, { \"type\" : \"ref_role\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \"export\\nthe application directory\" }], \"domain\" : \"std\", \"name\" : \"doc\", \"target\" : \"\", \"flag\" : \"\", \"fileid\" : [\"/deploy/export-realm-app\", \"\"] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \" of an existing app (using the\\n\" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \"--for-source-control\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \" option).\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 12 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"Realm apps deployed via GitHub \" }, { \"type\" : \"emphasis\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"must not\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \" specify the \" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"name\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \", \" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"app_id\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \",\\n\" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"location\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \", or \" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"deployment_model\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \" fields in the \" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"config.json\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \" file.\\nApplications deployed via GitHub must also omit the \" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"config.clusterName\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"\\nfield of the \" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"config.json\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \" of any Atlas \" }, { \"type\" : \"ref_role\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \"data sources\" }], \"domain\" : \"std\", \"name\" : \"label\", \"target\" : \"link-a-data-source\", \"flag\" : \"\", \"fileid\" : [\"mongodb/link-a-data-source\", \"std-label-link-a-data-source\"] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 14 } }, \"value\" : \" connected to the application.\" }] }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"value\" : \"Application configurations exported with the \" }, { \"type\" : \"literal\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"value\" : \"--for-source-control\" }] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 20 } }, \"value\" : \" flag\\nomit these fields automatically.\" }] }], \"domain\" : \"\", \"name\" : \"important\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 12 } }, \"value\" : \"Export For Source Control\" }] }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"value\" : \"Add the application directory to the repository and then commit the changes:\" }] }, { \"type\" : \"code\", \"position\" : { \"start\" : { \"line\" : 25 } }, \"lang\" : \"shell\", \"copyable\" : true, \"emphasize_lines\" : [], \"value\" : \"git add -A\\ngit commit -m \\\"Adds Realm Application Directory\\\"\", \"linenos\" : false }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 30 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 30 } }, \"value\" : \"Once you have committed the latest version of the application to the\\nrepository, push it to your GitHub repository:\" }] }, { \"type\" : \"code\", \"position\" : { \"start\" : { \"line\" : 33 } }, \"lang\" : \"shell\", \"copyable\" : true, \"emphasize_lines\" : [], \"value\" : \"git push origin <branch name>\", \"linenos\" : false }] }], \"domain\" : \"\", \"name\" : \"step\", \"argument\" : [] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Enable Automatic Deployment\" }], \"id\" : \"enable-automatic-deployment\" }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"After you have specified a repository to deploy and initialized it with the\\nlatest version of your app, you need to enable automatic deployment to begin\\ndeploying it. On the \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Configuration\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \" tab of the \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Deploy\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"\\npage, click \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Enable Automatic Deployment\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \". In the modal that\\nappears, click \" }, { \"type\" : \"role\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Enable Automatic Deployment\" }], \"domain\" : \"\", \"name\" : \"guilabel\", \"target\" : \"\", \"flag\" : \"\" }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \" to confirm your\\nselection.\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 7 } }, \"children\" : [], \"domain\" : \"\", \"name\" : \"figure\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 7 } }, \"value\" : \"/images/enable-automatic-deployment.png\" }], \"options\" : { \"alt\" : \"Enable Automatic GitHub Deployment in the Realm UI\", \"checksum\" : \"84f17ee2a6657e2dcd22293b333a2137c522d0b1d5acbc6a479e8efa437f545a\" } }] }], \"domain\" : \"\", \"name\" : \"step\", \"argument\" : [] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Make Changes to Your Application\" }], \"id\" : \"make-changes-to-your-application\" }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"A deployment contains one or more changes that you have made to your\\napplication since the previous deployment. Make any additions, modifications,\\nor deletions to the repository that you want to include in your deployment.\" }] }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \"Refer to the \" }, { \"type\" : \"ref_role\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \"Realm Application Configuration\" }], \"domain\" : \"std\", \"name\" : \"label\", \"target\" : \"app-configuration\", \"flag\" : \"\", \"fileid\" : [\"config\", \"std-label-app-configuration\"] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 4 } }, \"value\" : \" reference page and individual component\\nreference pages for details on the structure and schema of your application\\ndirectory.\" }] }] }], \"domain\" : \"\", \"name\" : \"step\", \"argument\" : [] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Commit and Push Your Changes\" }], \"id\" : \"commit-and-push-your-changes\" }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Once you have updated your application configuration, you can deploy the\\nupdates as a new version of your Realm app by pushing them to the GitHub repo\\nthat you specified. If Automatic GitHub Deployment is enabled,\\nRealm immediately deploys the latest commit for the configured\\nbranch and directory.\" }] }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 6 } }, \"value\" : \"When you are ready to deploy, commit all of the files that you want to include\\nand then push them to GitHub:\" }] }, { \"type\" : \"code\", \"position\" : { \"start\" : { \"line\" : 9 } }, \"lang\" : \"sh\", \"copyable\" : true, \"emphasize_lines\" : [], \"value\" : \"git add -A\\ngit commit -m \\\"<commit message>\\\"\\ngit push origin <branch name>\", \"linenos\" : false }, { \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 15 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 15 } }, \"value\" : \"Once you successfully push your changes to GitHub, Realm\\nimmediately deploys a new version of your application that matches the state\\nof the latest commit. Client applications will automatically use the newest\\nversion, so make sure that you also update your client code to use the new\\nversion if necessary.\" }] }, { \"type\" : \"directive\", \"position\" : { \"start\" : { \"line\" : 21 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"value\" : \"You can see the currently deployed version of your\\napplication as well as a historical log of previous\\ndeployments in the \" }, { \"type\" : \"ref_role\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"value\" : \"Deployment History\" }], \"domain\" : \"std\", \"name\" : \"label\", \"target\" : \"deployment-history\", \"flag\" : \"\", \"fileid\" : [\"deploy\", \"std-label-deployment-history\"] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"value\" : \" table in the Realm UI.\" }] }], \"domain\" : \"\", \"name\" : \"note\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 21 } }, \"value\" : \"Deployment History\" }] }] }], \"domain\" : \"\", \"name\" : \"step\", \"argument\" : [] }], \"domain\" : \"\", \"name\" : \"steps\", \"argument\" : [] }], \"fileid\" : \"includes/steps-github-deploy.yaml\" }], \"domain\" : \"\", \"name\" : \"include\", \"argument\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 44 } }, \"value\" : \"/includes/steps/github-deploy.rst\" }] }] }, { \"type\" : \"section\", \"position\" : { \"start\" : { \"line\" : 47 } }, \"children\" : [{ \"type\" : \"heading\", \"position\" : { \"start\" : { \"line\" : 47 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 47 } }, \"value\" : \"Summary\" }], \"id\" : \"summary\" }, { \"type\" : \"list\", \"position\" : { \"start\" : { \"line\" : 49 } }, \"children\" : [{ \"type\" : \"listItem\", \"position\" : { \"start\" : { \"line\" : 49 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 49 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 49 } }, \"value\" : \"You can deploy your Realm app by modifying a repo\\nhosted on GitHub.\" }] }] }, { \"type\" : \"listItem\", \"position\" : { \"start\" : { \"line\" : 49 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 52 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 52 } }, \"value\" : \"When Automatic GitHub Deployment is enabled, MongoDB Realm immediately\\ndeploys the latest commit. To deploy, commit your changes locally, then push\\nthem to your repo on GitHub.\" }] }] }, { \"type\" : \"listItem\", \"position\" : { \"start\" : { \"line\" : 49 } }, \"children\" : [{ \"type\" : \"paragraph\", \"position\" : { \"start\" : { \"line\" : 56 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 56 } }, \"value\" : \"MongoDB Realm keeps track of your \" }, { \"type\" : \"ref_role\", \"position\" : { \"start\" : { \"line\" : 56 } }, \"children\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 56 } }, \"value\" : \"Deployment History\" }], \"domain\" : \"std\", \"name\" : \"label\", \"target\" : \"deployment-history\", \"flag\" : \"\", \"fileid\" : [\"deploy\", \"std-label-deployment-history\"] }, { \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 56 } }, \"value\" : \".\" }] }] }], \"enumtype\" : \"unordered\" }] }] }], \"fileid\" : \"deploy/deploy-automatically-with-github.txt\", \"options\" : { \"headings\" : [{ \"depth\" : 2, \"id\" : \"overview\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 15 } }, \"value\" : \"Overview\" }] }, { \"depth\" : 2, \"id\" : \"prerequisites\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 23 } }, \"value\" : \"Prerequisites\" }] }, { \"depth\" : 2, \"id\" : \"procedure\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 42 } }, \"value\" : \"Procedure\" }] }, { \"depth\" : 3, \"id\" : \"install-the-mongodb-realm-github-app\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Install the MongoDB Realm GitHub App\" }] }, { \"depth\" : 3, \"id\" : \"specify-a-github-repository\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Specify a GitHub Repository\" }] }, { \"depth\" : 3, \"id\" : \"initialize-the-repository\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Initialize the Repository\" }] }, { \"depth\" : 3, \"id\" : \"enable-automatic-deployment\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Enable Automatic Deployment\" }] }, { \"depth\" : 3, \"id\" : \"make-changes-to-your-application\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Make Changes to Your Application\" }] }, { \"depth\" : 3, \"id\" : \"commit-and-push-your-changes\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 0 } }, \"value\" : \"Commit and Push Your Changes\" }] }, { \"depth\" : 2, \"id\" : \"summary\", \"title\" : [{ \"type\" : \"text\", \"position\" : { \"start\" : { \"line\" : 47 } }, \"value\" : \"Summary\" }] }] } }, \"source\" : \".. _deploy-github:\\n\\n================================\\nthis is translated text, ya know\\n================================\\n\\n.. default-domain:: mongodb\\n\\n.. contents:: On this page\\n   :local:\\n   :backlinks: none\\n   :depth: 2\\n   :class: singlecol\\n\\nOverview\\n--------\\n\\nYou can configure a Realm app to automatically deploy whenever you push updated\\n:ref:`configuration files <config-files>` to a :github:`GitHub <>` repository.\\nYou can clone the GitHub repository to your computer and then use standard Git\\ncommands to pull down the latest versions and deploy new changes.\\n\\nPrerequisites\\n-------------\\n\\n- A :github:`GitHub <>` account and repository. The repository should\\n  either contain an :ref:`application directory <app-directory>` or be\\n  empty. For information on how to create an empty repository, see\\n  GitHub's `create a repo\\n  <https://help.github.com/en/articles/create-a-repo>`_ guide.\\n\\n- An installed copy of the Git CLI. If you do not have ``git``\\n  installed, see the official guide for `Installing Git\\n  <https://git-scm.com/book/en/v1/Getting-Started-Installing-Git>`_.\\n\\n- A `MongoDB Atlas <https://www.mongodb.com/realm?tck=realm-docs#atlas-form-container>`_ \\n  :atlas:`Programmatic API Key </configure-api-access/#programmatic-api-keys>` \\n  to authenticate and authorize access to your app's underlying Git\\n  repo. If you have not yet generated a programmatic API key for your\\n  Atlas organization, do so now.\\n\\nProcedure\\n---------\\n\\n.. include:: /includes/steps/github-deploy.rst\\n\\nSummary\\n-------\\n\\n- You can deploy your Realm app by modifying a repo\\n  hosted on GitHub.\\n\\n- When Automatic GitHub Deployment is enabled, MongoDB Realm immediately\\n  deploys the latest commit. To deploy, commit your changes locally, then push\\n  them to your repo on GitHub.\\n\\n- MongoDB Realm keeps track of your :ref:`Deployment History\\n  <deployment-history>`.\\n\", \"created_at\" : ISODate(\"2021-04-09T22:46:32.76Z\"), \"static_assets\" : [] }"
-            //colSnoots.UpdateOne(new BsonDocument("page_id", "realm/caleb/skunkworks/deploy/deploy-automatically-with-github\"), d.ToString().Replace(text, "this is translated text, ya know"))
+            if (xlatedText != String.Empty)
+            {
+                //translatedDoc = BsonSerializer.Deserialize<BsonDocument>(docasstring);
+                //BsonDocument document = BsonSerializer.Deserialize<BsonDocument>(docasstring);
+                var filterForUpdate = Builders<BsonDocument>.Filter.Eq("_id", mainDoc.GetValue("_id"));
+                docsToReplace.Add(new ReplaceOneModel<BsonDocument>(filterForUpdate, translatedDoc));
+            }
 
         }
-        /*   private static void QuickTest()
-           {
-               Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", Environment.CurrentDirectory + "/../../../fresh-rampart-310520-4eafed6542f9.json");
-               TranslationServiceClient client = TranslationServiceClient.Create();
-               TranslateTextRequest request = new TranslateTextRequest
-               {
-                   SourceLanguageCode = "en",
-                   Contents = { "Hello, my name is Jose and I like to go to the library" },
-                   TargetLanguageCode = "es",
-                   Parent = "projects/fresh-rampart-310520"
-               };
-               TranslateTextResponse response = client.TranslateText(request);
-               // response.Translations will have one entry, because request.Contents has one entry.
-               Translation translation = response.Translations[0];
-               // Console.WriteLine($"Detected language: {translation.DetectedLanguageCode}");
-               Console.WriteLine($"Translated text: {translation.TranslatedText}");
 
-           }*/
 
         private static string TranslateTo(string language, string source)
         {
@@ -156,28 +172,35 @@ namespace xlator
             TranslateTextResponse response = client.TranslateText(request);
             return IgnoreList.ReAaddIgnoreWords(response.Translations[0].TranslatedText);
         }
-
-        private static string GetTextValue(BsonDocument d)
-        {
-            if (d.Contains("children"))
-            {
-                var kiddos = d.GetValue("children").AsBsonArray;
-                foreach (BsonDocument child in kiddos)
-                {
-                    if (child.Contains("type") && child.GetValue("type") == "text")
-                    {
-                        return child.GetValue("value").ToString();
-                    }
-
-                    if (child.Contains("children"))
-                    {
-                        return GetTextValue(child);
-                    }
-
-                    else return String.Empty;
-                }
-            }
-            return String.Empty;
-        }
     }
+
 }
+
+
+/*
+        private static void Test(BsonDocument doc, string text)
+        {
+            var docasstring = doc.ToString().Replace(text, "this is translated text, ya know");
+
+            BsonDocument document = BsonSerializer.Deserialize<BsonDocument>(docasstring);
+
+            colSnoots.ReplaceOne(new BsonDocument("_id", doc.GetValue("_id")), document);
+        }
+           private static void QuickTest()
+           {
+               Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", Environment.CurrentDirectory + "/../../../fresh-rampart-310520-4eafed6542f9.json");
+               TranslationServiceClient client = TranslationServiceClient.Create();
+               TranslateTextRequest request = new TranslateTextRequest
+               {
+                   SourceLanguageCode = "en",
+                   Contents = { "Hello, my name is Jose and I like to go to the library" },
+                   TargetLanguageCode = "es",
+                   Parent = "projects/fresh-rampart-310520"
+               };
+               TranslateTextResponse response = client.TranslateText(request);
+               // response.Translations will have one entry, because request.Contents has one entry.
+               Translation translation = response.Translations[0];
+               // Console.WriteLine($"Detected language: {translation.DetectedLanguageCode}");
+               Console.WriteLine($"Translated text: {translation.TranslatedText}");
+
+           }*/
