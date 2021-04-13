@@ -1,12 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Google.Apis.Auth.OAuth2;
 using Google.Cloud.Translate.V3;
-using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 
 namespace xlator
@@ -17,93 +13,92 @@ namespace xlator
         static MongoClient xlatorClient;
         static IMongoCollection<TextBlock> colBlobs;
         static MongoClient snootyClient;
-        static IMongoCollection<BsonDocument> colSnoots;
+        static IMongoCollection<SourceDocument> colSnoots;
 
-        private static List<ReplaceOneModel<BsonDocument>> docsToReplace;
-
-        static BsonDocument translatedDoc;
+        private static List<ReplaceOneModel<SourceDocument>> docsToReplace;
 
         static async Task Main(string[] args)
         {
-            docsToReplace = new List<ReplaceOneModel<BsonDocument>>();
+            docsToReplace = new List<ReplaceOneModel<SourceDocument>>();
 
             xlatorClient = new MongoClient("mongodb+srv://snoot:SnootSnoot@cluster0.xoid4.mongodb.net/myFirstDatabase?retryWrites=true&w=majority");
             colBlobs = xlatorClient.GetDatabase("xlator").GetCollection<TextBlock>("blocks");
 
             snootyClient = new MongoClient("mongodb+srv://caleb:6lQ0Qr8cnkFPRwQg@cluster0-ylwlz.mongodb.net/test?authSource=admin&replicaSet=Cluster0-shard-0&readPreference=primary&appname=MongoDB%20Compass&retryWrites=true&ssl=true");
-            colSnoots = snootyClient.GetDatabase("snooty_dev").GetCollection<BsonDocument>("documents");
+            colSnoots = snootyClient.GetDatabase("snooty_dev").GetCollection<SourceDocument>("documents");
 
-            var filter = new BsonDocument("page_id", BsonRegularExpression.Create("realm/caleb/skunkworks/deploy"));
+            var filter = Builders<SourceDocument>.Filter.Regex("page_id", "realm/caleb/skunkworks/deploy");
             Console.WriteLine(colSnoots.CountDocuments(filter));
 
             int counter = 1;
-            await colSnoots.Find(filter).ForEachAsync(mainDoc =>
+            await colSnoots
+                .Find(filter)
+                .ForEachAsync(mainDoc =>
             {
-                translatedDoc = mainDoc;
-                //Console.WriteLine(mainDoc);
                 Console.WriteLine(counter);
                 counter++;
 
-                if (mainDoc.Contains("ast"))
+                bool updated = false;
+                if (mainDoc.ast != null)
                 {
-                    var ast = mainDoc.GetValue("ast").AsBsonDocument;
-                    GetTextValues(ast, mainDoc);
+                    updated = GetTextValues(mainDoc.ast);
                 }
-
-
-                //colSnoots.ReplaceOne(new BsonDocument("_id", mainDoc.GetValue("_id")), translatedDoc);
-
-                if (docsToReplace.Count > 0)
+                if (updated)
                 {
-                    colSnoots.BulkWrite(docsToReplace);
+                    var filterForUpdate = Builders<SourceDocument>.Filter.Where(d => d._id == mainDoc._id);
+                    docsToReplace.Add(new ReplaceOneModel<SourceDocument>(filterForUpdate, mainDoc));
                 }
-
             });
+
+            if (docsToReplace.Count > 0)
+            {
+                colSnoots.BulkWrite(docsToReplace);
+            }
         }
 
-        private static void GetTextValues(BsonDocument d, BsonDocument mainDoc)
+        private static bool GetTextValues(Ast astBlock)
         {
-            foo++;
-
-            if (d.Contains("children"))
+            bool updated = false;
+            if (astBlock.children.Count > 0)
             {
-                var kiddos = d.GetValue("children").AsBsonArray;
-                foreach (BsonDocument child in kiddos)
+                foreach (var child in astBlock.children)
                 {
-                    if (child.Contains("type") && child.GetValue("type") == "text")
+                    if (child.type != null && child.type == "text" && child.value != null)
                     {
-                        ProcessTextNode(child.GetValue("value").ToString(), mainDoc);
+                        updated = ProcessTextNode(child);
                     }
 
-                    if (child.Contains("children"))
+                    if (child.children.Count > 0)
                     {
-                        GetTextValues(child, mainDoc);
+                        updated = GetTextValues(child);
                     }
                 }
             }
+
+            return updated;
         }
 
 
-        private static void ProcessTextNode(string englishText, BsonDocument mainDoc)
+        private static bool ProcessTextNode(Ast node)
         {
 
-            if (englishText == String.Empty)
+            if (node.value == String.Empty)
             {
-                return;
+                return false;
             }
 
-            var existing = colBlobs.Find<TextBlock>(tb => tb.SourceText == englishText).FirstOrDefault();
+            var existing = colBlobs.Find<TextBlock>(tb => tb.SourceText == node.value).FirstOrDefault();
             string xlatedText = String.Empty;
             if (existing == null)
             {
                 //This is either a new text blob, or an old one that has
                 // changed source text (which is, in this case, "new")
-                xlatedText = TranslateTo(language, englishText);
+                xlatedText = TranslateTo(language, node.value);
 
                 var enText = new TextBlock()
                 {
                     CreatedAt = DateTimeOffset.UtcNow,
-                    SourceText = englishText,
+                    SourceText = node.value,
                     Translations = new Dictionary<string, TranslationBlock>()
                         {
                             {
@@ -115,44 +110,36 @@ namespace xlator
                         }
                 };
 
-                translatedDoc = BsonSerializer.Deserialize<BsonDocument>(
-                    translatedDoc.ToString().Replace(englishText, xlatedText));
+                node.value = xlatedText;
 
                 colBlobs.InsertOne(enText);
+                return true;
             }
             else if (!existing.Translations.ContainsKey(language))
             { //we have a doc already, but no translation for this language
 
-                xlatedText = TranslateTo(language, englishText);
+                xlatedText = TranslateTo(language, node.value);
 
                 var xlateText = new TranslationBlock()
                 {
                     Auto = xlatedText
                 };
 
-                translatedDoc = BsonSerializer.Deserialize<BsonDocument>(
-                    translatedDoc.ToString().Replace(englishText, xlatedText));
+                node.value = xlatedText;
 
                 var update = Builders<TextBlock>.Update.Set("translations",
                     new Dictionary<string, TranslationBlock>()
                     {{ language, xlateText } });
 
                 colBlobs.UpdateOne<TextBlock>(e => e.Id == existing.Id, update);
+                return true;
             }
             else
             {
                 // the english hasn't changed, so if there's already translated text,
                 // don't bother re-translating!
+                return false;
             }
-
-            if (xlatedText != String.Empty)
-            {
-                //translatedDoc = BsonSerializer.Deserialize<BsonDocument>(docasstring);
-                //BsonDocument document = BsonSerializer.Deserialize<BsonDocument>(docasstring);
-                var filterForUpdate = Builders<BsonDocument>.Filter.Eq("_id", mainDoc.GetValue("_id"));
-                docsToReplace.Add(new ReplaceOneModel<BsonDocument>(filterForUpdate, translatedDoc));
-            }
-
         }
 
 
