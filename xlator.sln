@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.810.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "xlator", "xlator\xlator.csproj", "{50A6E4F0-3FE4-4EFD-9434-31EDF49122B8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tests", "Tests\Tests.csproj", "{27B3AA45-CB06-41C1-8B03-F4E714074101}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{50A6E4F0-3FE4-4EFD-9434-31EDF49122B8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{50A6E4F0-3FE4-4EFD-9434-31EDF49122B8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{50A6E4F0-3FE4-4EFD-9434-31EDF49122B8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{50A6E4F0-3FE4-4EFD-9434-31EDF49122B8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{27B3AA45-CB06-41C1-8B03-F4E714074101}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{27B3AA45-CB06-41C1-8B03-F4E714074101}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{27B3AA45-CB06-41C1-8B03-F4E714074101}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{27B3AA45-CB06-41C1-8B03-F4E714074101}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {1FF05AD6-32DD-42C1-A9FC-7EDE578142A1}
+	EndGlobalSection
+EndGlobal
