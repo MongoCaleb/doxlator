@@ -38,6 +38,8 @@ namespace xlator
         [BsonIgnoreIfNull]
         public string type { get; set; }
         [BsonIgnoreIfNull]
+        public List<Ast> argument { get; set; }
+        [BsonIgnoreIfNull]
         public object position { get; set; } //TODO
         [BsonIgnoreIfNull]
         public object fileid { get; set; }
@@ -52,11 +54,9 @@ namespace xlator
         [BsonIgnoreIfNull]
         public object domain { get; set; }
         [BsonIgnoreIfNull]
-        public object name { get; set; }
+        public string name { get; set; }
         [BsonIgnoreIfNull]
         public object html_id { get; set; }
-        [BsonIgnoreIfNull]
-        public object argument { get; set; }
         [BsonIgnoreIfNull]
         public object entries { get; set; }
         [BsonIgnoreIfNull]
@@ -79,10 +79,13 @@ namespace xlator
         public object emphasize_lines { get; set; }
         [BsonIgnoreIfNull]
         public object linenos { get; set; }
+        [BsonIgnoreIfNull]
+        public object caption { get; set; }
+        [BsonIgnoreIfNull]
+        public object term { get; set; }
+        [BsonExtraElements]
+        public BsonDocument CatchAll { get; set; }
 
-        /* [BsonExtraElements]
-         public BsonDocument CatchAll { get; set; }
-        */
         public Ast()
         {
             this.children = new List<Ast>();
