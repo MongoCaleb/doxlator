@@ -12,7 +12,6 @@ namespace xlator
     {
         static string _language = "";
         static string _source_branch = "";
-        static string _new_branch = "";
         static MongoClient xlatorClient;
         static IMongoCollection<TextBlock> colBlobs;
         static MongoClient snootyClient;
@@ -64,8 +63,6 @@ namespace xlator
                     GetTextValues(mainDoc.ast);
                 }
 
-                mainDoc.page_id = mainDoc.page_id.Replace(_source_branch, _new_branch);
-
                 var filterForUpdate = Builders<SourceDocument>.Filter.Where(d => d._id == mainDoc._id);
                 translatedDocsToUpload.Add(new ReplaceOneModel<SourceDocument>(filterForUpdate, mainDoc) { IsUpsert = true });
 
@@ -96,6 +93,10 @@ namespace xlator
         {
             foreach (string argument in args)
             {
+                if (argument.ToLower().StartsWith("help"))
+                {
+                    ShowHelp();
+                }
                 if (argument.ToLower().StartsWith("language"))
                 {
                     string[] parts = argument.Split('=');
@@ -105,11 +106,6 @@ namespace xlator
                 {
                     string[] parts = argument.Split('=');
                     _source_branch = parts[1];
-                }
-                else if (argument.ToLower().StartsWith("new_branch"))
-                {
-                    string[] parts = argument.Split('=');
-                    _new_branch = parts[1];
                 }
                 else if (argument.ToLower().StartsWith("clean"))
                 {
@@ -123,15 +119,19 @@ namespace xlator
 
             if (_language == String.Empty || _source_branch == String.Empty)
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("You must specify both the target language and branch. Optionally provide a new branch name:");
-                Console.ForegroundColor = ConsoleColor.Gray;
-                Console.WriteLine("xlate langauge=es source_branch=myGitBranch new_branch=myGitBranch_es");
-                Console.Read();
-                Environment.Exit(-1);
+                ShowHelp();
             }
-            if (_new_branch == String.Empty) _new_branch = _source_branch;
+        }
 
+        private static void ShowHelp()
+        {
+            Console.WriteLine("The following parameters are available:");
+            Console.WriteLine(" - language={2-letter language code} REQUIRED");
+            Console.WriteLine(" - source_branch={name of github branch} REQUIRED");
+            Console.WriteLine(" - clean => Do not use the cached translations; force new translation");
+            Console.WriteLine(" - debug => show a bit of additional info in the console");
+            Console.WriteLine(" - subsection={string} => only translate a subset of the docs corpus");
+            Environment.Exit(-1);
         }
 
         private static bool GetTextValues(Ast astBlock)
@@ -149,7 +149,7 @@ namespace xlator
                     {
                         ProcessTextNode(child);
                     }
-                    else if (Helpers.SpecialTranslateTypes.Contains(child.type))
+                    else if (child.type == "directive" && Helpers.SpecialTranslateTypes.Contains(child.name))
                     {
                         foreach (var arg in child.argument)
                         {
@@ -159,7 +159,7 @@ namespace xlator
                             }
                         }
                     }
-                    //iterate,yo
+                    // Iterate, you fools!
                     if (child.children.Count > 0)
                     {
                         GetTextValues(child);
@@ -266,7 +266,16 @@ namespace xlator
                 Parent = "projects/fresh-rampart-310520",
                 MimeType = "text/plain"
             };
-            string xlation = client.TranslateText(request).Translations[0].TranslatedText;
+            string xlation = "";
+            try
+            {
+                xlation = client.TranslateText(request).Translations[0].TranslatedText;
+            }
+            catch (Exception ex)
+            {
+                Console.Write(ex.Message);
+                Environment.Exit(-1);
+            }
             // total hack. Google translate is removing trailing spaces
             // c# API is very poorly documented, so this hack will have to do
             // for now. Same with the HtmlDecode happening in the next line.
@@ -279,70 +288,19 @@ namespace xlator
 }
 
 
-// TODO: TOC
+// TODO: TOC!
 //TODO: batch xlate by document
+// TODO: Error handling. Eh, who needs it?
 
 //TODO: [[IN TEST]] titles of notes, etc. are not translated.
 // type = directive && name="note" or warning or tip, for each argument if type is "text", transate value
-/*{
-            "type": "directive",
-            "position": {},
-            "children": [
-             
-            ],
-            "domain": "",
-            "name": "note",
-            "argument": [
-              {
-                "type": "text",
-                "position": {
-                  "start": {
-                    "line": 24
-                  }
-                },
-                "value": "Versions Update on Realm Open"
-              }
-            ]
-          },*/
 
-//TODO : figure out why asyncfind cursor ins't parallelizing each mainDoc
+//TODO : figure out why find.foreachasync() isn't parallelizing each mainDoc
 
 // TODO: remove catchall
-
-// TODO: use reverse API to check accuracy (or use MSFT?)
 
 
 //TODO: command arg to specify subsection only?
 // TODO: STRETCH: UI for manual xlation
 // TODO: STRETCH: Github and Slack integrations
-
-
-
-
-/*
-        private static void Test(BsonDocument doc, string text)
-        {
-            var docasstring = doc.ToString().Replace(text, "this is translated text, ya know");
-
-            BsonDocument document = BsonSerializer.Deserialize<BsonDocument>(docasstring);
-
-            colSnoots.ReplaceOne(new BsonDocument("_id", doc.GetValue("_id")), document);
-        }
-           private static void QuickTest()
-           {
-               Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", Environment.CurrentDirectory + "/../../../fresh-rampart-310520-4eafed6542f9.json");
-               TranslationServiceClient client = TranslationServiceClient.Create();
-               TranslateTextRequest request = new TranslateTextRequest
-               {
-                   SourceLanguageCode = "en",
-                   Contents = { "Hello, my name is Jose and I like to go to the library" },
-                   TargetLanguageCode = "es",
-                   Parent = "projects/fresh-rampart-310520"
-               };
-               TranslateTextResponse response = client.TranslateText(request);
-               // response.Translations will have one entry, because request.Contents has one entry.
-               Translation translation = response.Translations[0];
-               // Console.WriteLine($"Detected language: {translation.DetectedLanguageCode}");
-               Console.WriteLine($"Translated text: {translation.TranslatedText}");
-
-           }*/
+// TODO: STRETCH: use reverse API to check accuracy (or use MSFT?)

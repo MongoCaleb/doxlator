@@ -18,10 +18,24 @@ namespace xlator
         public static List<string> SpecialTranslateTypes =
             new List<string>()
             {
-                "directive",
                 "note",
                 "tip",
                 "warning"
             };
+
+        public static bool ShouldBeTranslated(Ast node)
+        {
+            if (Helpers.DoNotTranslateTypes.Contains(node.type))
+            {
+                return false;
+            }
+            if (node.type == "directive" && Helpers.SpecialTranslateTypes.Contains(node.name))
+            {
+                return true;
+            }
+            return true;
+        }
     }
+
+
 }

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NUnit.Framework;
 using xlator;
 
@@ -23,5 +24,47 @@ namespace Tests
                 IgnoreList.ReAaddIgnoreWords(result));
 
         }
+
+        [Test]
+        public void ShouldITranslate()
+        {
+            var testAst = new Ast()
+            {
+                type = "diretive",
+                argument = new List<Ast>()
+                {
+                    new Ast()
+                    {
+                        type = "text",
+                        value = "translate me!"
+                    }
+                }
+            };
+
+
+
+        }
     }
 }
+
+/*{
+        "type": "directive",
+        "position": {},
+        "children": [
+
+
+        ],
+        "domain": "",
+        "name": "note",
+        "argument": [
+          {
+            "type": "text",
+            "position": {
+              "start": {
+                "line": 24
+              }
+            },
+            "value": "Versions Update on Realm Open"
+          }
+        ]
+      },*/
